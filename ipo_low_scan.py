@@ -6,21 +6,14 @@ from io import BytesIO
 from datetime import datetime, timedelta
 import warnings
 
-
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-# --------------------------
-# CONFIG
-# --------------------------
 MIN_LISTING_DAYS = 150
 THRESHOLD = 0.01
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 
 
-# --------------------------
-# Telegram
-# --------------------------
 def send_telegram(msg: str):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}
@@ -30,9 +23,6 @@ def send_telegram(msg: str):
         pass
 
 
-# -----------------------------------------------------------
-# Load NSE equity list
-# -----------------------------------------------------------
 def fetch_equity_list():
     url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
     r = requests.get(url, timeout=40)
@@ -41,9 +31,6 @@ def fetch_equity_list():
     return df
 
 
-# -----------------------------------------------------------
-# Filter IPOs and keep EQ (shortable)
-# -----------------------------------------------------------
 def get_recent_ipos(days: int):
     df = fetch_equity_list()
 
@@ -52,15 +39,11 @@ def get_recent_ipos(days: int):
 
     cutoff = datetime.now() - timedelta(days=days)
     recent = df[df["DATE OF LISTING"] >= cutoff]
-
-    recent = recent[recent["SERIES"] == "EQ"]  # only shortable stocks
+    recent = recent[recent["SERIES"] == "EQ"]
 
     return recent["SYMBOL"].tolist(), recent
 
 
-# -----------------------------------------------------------
-# Fetch price history
-# -----------------------------------------------------------
 def fetch_history(symbol):
     try:
         hist = yf.Ticker(symbol + ".NS").history(period="max")
@@ -69,51 +52,22 @@ def fetch_history(symbol):
         return None
 
 
-# -----------------------------------------------------------
-# Compute ATL
-# -----------------------------------------------------------
-def compute_atl(hist):
+# ---------------------------------
+# NEW: Exclude today's candle
+# ---------------------------------
+def compute_atl_excluding_today(hist):
     try:
-        atl = hist["Low"].min()
-        idx = hist["Low"].idxmin()
-        pos = hist.index.get_loc(idx)
-        return atl, idx, pos, len(hist)
+        hist_no_today = hist.iloc[:-1]
+
+        atl = hist_no_today["Low"].min()
+        idx = hist_no_today["Low"].idxmin()
+        pos = hist_no_today.index.get_loc(idx)
+
+        return atl, idx, pos, len(hist_no_today)
     except:
         return None
 
 
-# -----------------------------------------------------------
-# TOP 2 ADVANCED BREAKDOWN FILTERS
-# -----------------------------------------------------------
-
-# 1️⃣ Volume Dry-Up Breakdown (VDB)
-def volume_dry_up(hist):
-    if len(hist) < 20:
-        return False
-
-    vol20 = hist["Volume"].tail(20).mean()
-    vol5 = hist["Volume"].tail(5).mean()
-
-    return vol5 < vol20 * 0.60
-
-
-# 2️⃣ Range Expansion Breakdown (REB)
-def range_expansion_breakdown(hist):
-    if len(hist) < 12:
-        return False
-
-    today = hist.iloc[-1]
-    prev = hist.iloc[-2]
-
-    body_today = abs(today["Close"] - today["Open"])
-    avg_body_10 = (hist["Close"] - hist["Open"]).abs().tail(11).head(10).mean()
-
-    return (body_today > avg_body_10 * 1.3) and (today["Close"] < prev["Low"])
-
-
-# ======================================================================
-# MAIN WORKFLOW
-# ======================================================================
 if __name__ == "__main__":
     print("Fetching IPOs from NSE...")
 
@@ -136,7 +90,7 @@ if __name__ == "__main__":
             print("No data:", sym)
             continue
 
-        atl_info = compute_atl(hist)
+        atl_info = compute_atl_excluding_today(hist)
         if not atl_info:
             print("ATL error:", sym)
             continue
@@ -144,19 +98,22 @@ if __name__ == "__main__":
         atl, atl_idx, atl_pos, total = atl_info
         current = hist["Close"].iloc[-1]
 
-        # Apply top 2 advanced breakdown filters
-        vdb = volume_dry_up(hist)
-        reb = range_expansion_breakdown(hist)
+        # -----------------------------------------
+        # NEW FILTER: ATL must be older than 3 candles
+        # -----------------------------------------
+        if atl_pos > total - 4:
+            print(f"Skipping {sym} (ATL too recent: within last 3 candles)")
+            continue
 
-        # Main breakdown condition + advanced filters
-        if current <= atl * (1 + THRESHOLD) and (vdb or reb):
+        # Breakdown condition
+        if current <= atl * (1 + THRESHOLD):
             msg = (
-                f"🚨 *POWERFUL Breakdown Detected!*\n"
+                f"🚨 *Breakdown Detected*\n"
                 f"*Symbol:* {sym}\n"
                 f"*CMP:* {current:.2f}\n"
-                f"*ATL:* {atl:.2f}\n\n"
-                f"*Volume Dry-Up:* {'Yes' if vdb else 'No'}\n"
-                f"*Range Expansion Breakdown:* {'Yes' if reb else 'No'}\n"
+                f"*ATL:* {atl:.2f}\n"
+                f"*ATL Date:* {atl_idx.date()}\n"
+                f"*ATL Age:* {total - atl_pos} candles ago\n"
             )
 
             print("ALERT:", sym)
