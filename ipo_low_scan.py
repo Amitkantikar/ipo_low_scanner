@@ -8,7 +8,7 @@ import warnings
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-MIN_LISTING_DAYS = 260
+MIN_LISTING_DAYS = 120
 THRESHOLD = 0.01
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
