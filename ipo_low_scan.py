@@ -52,9 +52,9 @@ def fetch_history(symbol):
         return None
 
 
-# ---------------------------------
-# Exclude today's candle
-# ---------------------------------
+# ---------------------------------------------------------
+# Exclude today's candle for ATL calculation
+# ---------------------------------------------------------
 def compute_atl_excluding_today(hist):
     try:
         hist_no_today = hist.iloc[:-1]
@@ -68,6 +68,25 @@ def compute_atl_excluding_today(hist):
         return None
 
 
+# ---------------------------------------------------------
+# NEW FILTER → Check last 3 candle closes form Lower Lows
+# ---------------------------------------------------------
+def last_three_candle_lower_lows(hist):
+    # Need at least 4 candles including today's close
+    if len(hist) < 4:
+        return False
+
+    c0 = hist["Close"].iloc[-1]     # today close
+    c1 = hist["Close"].iloc[-2]
+    c2 = hist["Close"].iloc[-3]
+    c3 = hist["Close"].iloc[-4]
+
+    return c0 < c1 and c1 < c2 and c2 < c3
+
+
+# ---------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------
 if __name__ == "__main__":
     print("Fetching IPOs from NSE...")
 
@@ -98,8 +117,15 @@ if __name__ == "__main__":
         atl, atl_idx, atl_pos, total = atl_info
         current = hist["Close"].iloc[-1]
 
-        # Breakdown condition
-        if current <= atl * (1 + THRESHOLD):
+        # ---------------------------
+        # Apply Filters:
+        # 1️⃣ Threshold filter
+        # 2️⃣ Last 3 candles lower-low filter
+        # ---------------------------
+        threshold_ok = current <= atl * (1 + THRESHOLD)
+        three_ll_ok = last_three_candle_lower_lows(hist)
+
+        if threshold_ok and three_ll_ok:
             msg = (
                 f"🚨 *Breakdown Detected*\n"
                 f"*Symbol:* {sym}\n"
@@ -107,6 +133,7 @@ if __name__ == "__main__":
                 f"*ATL:* {atl:.2f}\n"
                 f"*ATL Date:* {atl_idx.date()}\n"
                 f"*ATL Age:* {total - atl_pos} candles ago\n"
+                f"*Last 3 Closes:* Lower-Lows ✓"
             )
 
             print("ALERT:", sym)
