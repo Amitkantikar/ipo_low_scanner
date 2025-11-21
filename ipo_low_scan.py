@@ -69,14 +69,73 @@ def compute_atl_excluding_today(hist):
 
 
 # ---------------------------------------------------------
-# NEW FILTER → Check last 3 candle closes form Lower Lows
+# Filter 1 — Volume Spike Filter (Globally used)
+# ---------------------------------------------------------
+def volume_spike_filter(hist):
+    if len(hist) < 21:
+        return False
+
+    vol20 = hist["Volume"].iloc[-21:-1].mean()
+    return hist["Volume"].iloc[-1] > vol20
+
+
+# ---------------------------------------------------------
+# Filter 2 — Big Breakdown Candle (Strong body)
+# ---------------------------------------------------------
+def big_breakdown_candle(hist):
+    c = hist.iloc[-1]
+    body = abs(c["Close"] - c["Open"])
+    full = c["High"] - c["Low"]
+
+    if full == 0:
+        return False
+
+    body_ratio = body / full
+
+    # Strong body candle: body must be >60% of total candle range
+    return body_ratio >= 0.60 and c["Close"] < c["Open"]
+
+
+# ---------------------------------------------------------
+# Filter 3 — Grinding Trend Filter (Avoid small candles downtrend)
+# ---------------------------------------------------------
+def avoid_grinding(hist):
+    last10 = hist.tail(10)
+    avg_body = (last10["Close"] - last10["Open"]).abs().mean()
+    last_body = abs(hist["Close"].iloc[-1] - hist["Open"].iloc[-1])
+
+    return last_body > avg_body * 1.2
+
+
+# ---------------------------------------------------------
+# Filter 4 — Retest Failure Filter
+# Price must bounce toward EMA and fail
+# ---------------------------------------------------------
+def retest_failure_filter(hist):
+    if len(hist) < 25:
+        return False
+
+    hist["EMA9"] = hist["Close"].ewm(span=9).mean()
+    hist["EMA20"] = hist["Close"].ewm(span=20).mean()
+
+    last10 = hist.iloc[-11:-1]
+    today = hist.iloc[-1]
+
+    bounced = (last10["High"] > last10["EMA9"]) | (last10["High"] > last10["EMA20"])
+
+    rejection_today = today["Close"] < today["Open"]
+
+    return bounced.any() and rejection_today
+
+
+# ---------------------------------------------------------
+# OLD FILTER — Last 3 Candle Lower Lows
 # ---------------------------------------------------------
 def last_three_candle_lower_lows(hist):
-    # Need at least 4 candles including today's close
     if len(hist) < 4:
         return False
 
-    c0 = hist["Close"].iloc[-1]     # today close
+    c0 = hist["Close"].iloc[-1]
     c1 = hist["Close"].iloc[-2]
     c2 = hist["Close"].iloc[-3]
     c3 = hist["Close"].iloc[-4]
@@ -117,23 +176,33 @@ if __name__ == "__main__":
         atl, atl_idx, atl_pos, total = atl_info
         current = hist["Close"].iloc[-1]
 
-        # ---------------------------
-        # Apply Filters:
-        # 1️⃣ Threshold filter
-        # 2️⃣ Last 3 candles lower-low filter
-        # ---------------------------
         threshold_ok = current <= atl * (1 + THRESHOLD)
-        three_ll_ok = last_three_candle_lower_lows(hist)
+        ll_ok = last_three_candle_lower_lows(hist)
+        vol_ok = volume_spike_filter(hist)
+        big_candle_ok = big_breakdown_candle(hist)
+        grind_ok = avoid_grinding(hist)
+        retest_ok = retest_failure_filter(hist)
 
-        if threshold_ok and three_ll_ok:
+        # MASTER CONDITION — All strong filters together
+        if (
+            threshold_ok
+            and ll_ok
+            and vol_ok
+            and big_candle_ok
+            and grind_ok
+            and retest_ok
+        ):
             msg = (
-                f"🚨 *Breakdown Detected*\n"
+                f"🚨 *High-Quality Breakdown Detected*\n"
                 f"*Symbol:* {sym}\n"
                 f"*CMP:* {current:.2f}\n"
                 f"*ATL:* {atl:.2f}\n"
                 f"*ATL Date:* {atl_idx.date()}\n"
                 f"*ATL Age:* {total - atl_pos} candles ago\n"
-                f"*Last 3 Closes:* Lower-Lows ✓"
+                f"📌 Volume Spike ✓\n"
+                f"📌 Big Breakdown Candle ✓\n"
+                f"📌 Retest Failure ✓\n"
+                f"📌 No Grinding Trend ✓"
             )
 
             print("ALERT:", sym)
