@@ -53,7 +53,7 @@ def fetch_history(symbol):
 
 
 # ---------------------------------
-# NEW: Exclude today's candle
+# Exclude today's candle
 # ---------------------------------
 def compute_atl_excluding_today(hist):
     try:
@@ -97,13 +97,6 @@ if __name__ == "__main__":
 
         atl, atl_idx, atl_pos, total = atl_info
         current = hist["Close"].iloc[-1]
-
-        # -----------------------------------------
-        # NEW FILTER: ATL must be older than 3 candles
-        # -----------------------------------------
-        if atl_pos > total - 4:
-            print(f"Skipping {sym} (ATL too recent: within last 3 candles)")
-            continue
 
         # Breakdown condition
         if current <= atl * (1 + THRESHOLD):
